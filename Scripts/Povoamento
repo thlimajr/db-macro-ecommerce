@@ -1,0 +1,234 @@
+-- =====================================================================================
+-- Script de Povoamento de Dados Fictícios.
+-- =====================================================================================
+-- Este script gera:
+--   • 19 meses de indicadores macroeconômicos (2025-01 a 2026-07)
+--   • 12 produtos em 4 categorias
+--   • 12 clientes "de fundo" (background) usados na geração aleatória em massa
+--   • ~500 a 800 vendas aleatórias, com probabilidade de inadimplência que CRESCE
+--     junto com a Selic do mês (para dar sentido à RF003)
+--   • 3 clientes "roteirizados" com histórico manual, para evidenciar claramente:
+--       - (RFM): cliente fiel de alto valor e recência
+--       - (Churn): cliente inativo há mais de 180 dias
+--       - (Correlação): cliente inadimplente concentrado em meses de Selic alta
+-- =====================================================================================
+ 
+ 
+-- Limpa dados de execuções anteriores para testes dos comandos (mantém a estrutura das tabelas)
+SET FOREIGN_KEY_CHECKS = 0;
+TRUNCATE TABLE fct_vendas;
+TRUNCATE TABLE dim_clientes;
+TRUNCATE TABLE dim_produtos;
+TRUNCATE TABLE dim_macroeconomia;
+SET FOREIGN_KEY_CHECKS = 1;
+ 
+ 
+-- =====================================================================================
+
+
+-- =====================================================================================
+-- 1. DIM_MACROECONOMIA — 19 meses (jan/2025 a jul/2026)
+-- =====================================================================================
+INSERT INTO dim_macroeconomia (sk_tempo, ano_mes_competencia, ano, mes, taxa_selic_ano, ipca_mensal) VALUES
+(202501, '2025-01', 2025, 1, 11.75, 0.52),
+(202502, '2025-02', 2025, 2, 11.25, 0.45),
+(202503, '2025-03', 2025, 3, 10.75, 0.38),
+(202504, '2025-04', 2025, 4, 10.75, 0.31),
+(202505, '2025-05', 2025, 5, 10.50, 0.29),
+(202506, '2025-06', 2025, 6, 10.50, 0.24),
+(202507, '2025-07', 2025, 7, 10.25, 0.26),
+(202508, '2025-08', 2025, 8, 10.00, 0.22),
+(202509, '2025-09', 2025, 9, 10.00, 0.28),
+(202510, '2025-10', 2025, 10, 9.75, 0.33),
+(202511, '2025-11', 2025, 11, 9.75, 0.41),
+(202512, '2025-12', 2025, 12, 9.50, 0.55),
+(202601, '2026-01', 2026, 1, 9.50, 0.47),
+(202602, '2026-02', 2026, 2, 9.75, 0.39),
+(202603, '2026-03', 2026, 3, 10.00, 0.36),
+(202604, '2026-04', 2026, 4, 10.25, 0.34),
+(202605, '2026-05', 2026, 5, 10.50, 0.30),
+(202606, '2026-06', 2026, 6, 10.75, 0.32),
+(202607, '2026-07', 2026, 7, 11.00, 0.37);
+ 
+ 
+-- =====================================================================================
+-- 2. DIM_PRODUTOS — 12 produtos em 4 categorias
+-- =====================================================================================
+INSERT INTO dim_produtos (id_produto_origem, nome_produto, categoria, preco_custo, preco_venda_atual) VALUES
+('PROD-001', 'Fone Bluetooth ProSound',        'Eletrônicos', 80.00,  199.90),
+('PROD-002', 'Smartwatch FitTrack X2',         'Eletrônicos', 220.00, 449.90),
+('PROD-003', 'Carregador Turbo 65W',           'Eletrônicos', 35.00,  89.90),
+('PROD-004', 'Caixa de Som Portátil Boom',     'Eletrônicos', 90.00,  219.90),
+('PROD-005', 'Camiseta Básica Premium',        'Moda',        18.00,  59.90),
+('PROD-006', 'Jaqueta Corta-Vento Urban',      'Moda',        60.00,  169.90),
+('PROD-007', 'Tênis Casual Confort',           'Moda',        95.00,  249.90),
+('PROD-008', 'Jogo de Panelas Antiaderente',   'Casa',        110.00, 279.90),
+('PROD-009', 'Kit Organizadores Multiuso',     'Casa',        25.00,  69.90),
+('PROD-010', 'Luminária de Mesa LED',          'Casa',        30.00,  84.90),
+('PROD-011', 'Kit Skincare Facial Completo',   'Beleza',      45.00,  129.90),
+('PROD-012', 'Perfume Essência Bloom 100ml',   'Beleza',      55.00,  159.90);
+ 
+ 
+-- =====================================================================================
+-- 3. DIM_CLIENTES — 12 clientes "de fundo" (usados na geração aleatória em massa)
+-- =====================================================================================
+INSERT INTO dim_clientes (id_cliente_origem, nome_cliente, regiao_brasil, score_credito, data_cadastro) VALUES
+('CLI-001', 'Ana Beatriz Souza',      'SP', 780, '2023-03-14'),
+('CLI-002', 'Bruno Carvalho Lima',    'RJ', 640, '2023-05-02'),
+('CLI-003', 'Carla Mendes Ferreira',  'MG', 705, '2023-07-19'),
+('CLI-004', 'Diego Santos Rocha',     'BA', 520, '2023-09-08'),
+('CLI-005', 'Elisa Nogueira Prado',   'RS', 890, '2023-11-23'),
+('CLI-006', 'Fábio Henrique Alves',   'PR', 610, '2024-01-11'),
+('CLI-007', 'Gabriela Ramos Vieira',  'SC', 745, '2024-02-27'),
+('CLI-008', 'Henrique Barbosa Dias',  'DF', 480, '2024-04-15'),
+('CLI-009', 'Isabela Cristina Melo',  'PE', 690, '2024-06-30'),
+('CLI-010', 'João Pedro Azevedo',     'CE', 560, '2024-08-19'),
+('CLI-011', 'Karina Oliveira Castro', 'GO', 815, '2024-10-05'),
+('CLI-012', 'Lucas Martins Teixeira', 'AM', 630, '2024-12-01');
+ 
+ 
+-- =====================================================================================
+-- 4. GERAÇÃO ALEATÓRIA EM MASSA DE VENDAS (dados "de ruído" para volume/performance)
+--    A probabilidade de inadimplência aumenta conforme a Selic do mês sobe,
+--    dando base real para a view vw_correlacao_inadimplencia_juros (RF003).
+-- =====================================================================================
+DELIMITER $$
+ 
+CREATE PROCEDURE sp_povoar_vendas_ficticias()
+BEGIN
+    DECLARE done INT DEFAULT 0;
+    DECLARE v_sk_tempo INT;
+    DECLARE v_taxa_selic DECIMAL(5,2);
+    DECLARE v_ano_mes VARCHAR(7);
+    DECLARE v_qtd_vendas_mes INT;
+    DECLARE i INT;
+    DECLARE v_sk_cliente INT;
+    DECLARE v_sk_produto INT;
+    DECLARE v_preco DECIMAL(10,2);
+    DECLARE v_quantidade INT;
+    DECLARE v_dia INT;
+    DECLARE v_metodo VARCHAR(30);
+    DECLARE v_status VARCHAR(30);
+    DECLARE v_prob_inadimplencia DECIMAL(6,4);
+    DECLARE v_data_venda DATETIME;
+ 
+    DECLARE cur CURSOR FOR
+        SELECT sk_tempo, taxa_selic_ano, ano_mes_competencia
+        FROM dim_macroeconomia
+        ORDER BY sk_tempo;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+ 
+    OPEN cur;
+    read_loop: LOOP
+        FETCH cur INTO v_sk_tempo, v_taxa_selic, v_ano_mes;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+ 
+        -- volume de vendas do mês (leve variação aleatória, entre 25 e 40 vendas)
+        SET v_qtd_vendas_mes = 25 + FLOOR(RAND() * 15);
+ 
+        -- probabilidade de inadimplência cresce com a Selic (regra de correlação)
+        SET v_prob_inadimplencia = LEAST(0.35, GREATEST(0.03, (v_taxa_selic - 8) * 0.035));
+ 
+        SET i = 0;
+        WHILE i < v_qtd_vendas_mes DO
+            SELECT sk_cliente INTO v_sk_cliente
+            FROM dim_clientes
+            WHERE id_cliente_origem LIKE 'CLI-0%'
+            ORDER BY RAND() LIMIT 1;
+ 
+            SELECT sk_produto, preco_venda_atual INTO v_sk_produto, v_preco
+            FROM dim_produtos
+            ORDER BY RAND() LIMIT 1;
+ 
+            SET v_quantidade = 1 + FLOOR(RAND() * 4);
+            SET v_dia = 1 + FLOOR(RAND() * 27);
+            SET v_data_venda = STR_TO_DATE(
+                CONCAT(v_ano_mes, '-', LPAD(v_dia, 2, '0'), ' ',
+                       LPAD(FLOOR(RAND() * 23), 2, '0'), ':',
+                       LPAD(FLOOR(RAND() * 59), 2, '0'), ':00'),
+                '%Y-%m-%d %H:%i:%s'
+            );
+ 
+            SET v_metodo = ELT(1 + FLOOR(RAND() * 3), 'Pix', 'Crédito', 'Boleto');
+ 
+            IF RAND() < 0.06 THEN
+                SET v_status = 'Cancelado';
+            ELSEIF RAND() < v_prob_inadimplencia THEN
+                SET v_status = 'Inadimplente';
+            ELSE
+                SET v_status = 'Aprovado';
+            END IF;
+ 
+            INSERT INTO fct_vendas (
+                id_venda_origem, fk_cliente, fk_produto, fk_tempo,
+                data_venda, quantidade, valor_unitario, valor_total,
+                metodo_pagamento, status_pagamento
+            ) VALUES (
+                CONCAT('BULK-', v_ano_mes, '-', LPAD(i, 4, '0')),
+                v_sk_cliente, v_sk_produto, v_sk_tempo,
+                v_data_venda, v_quantidade, v_preco, v_preco * v_quantidade,
+                v_metodo, v_status
+            );
+ 
+            SET i = i + 1;
+        END WHILE;
+    END LOOP;
+    CLOSE cur;
+END$$
+ 
+DELIMITER ;
+ 
+CALL sp_povoar_vendas_ficticias();
+DROP PROCEDURE sp_povoar_vendas_ficticias;
+ 
+ 
+-- =====================================================================================
+-- 5. CLIENTES ROTEIRIZADOS — cenários manuais para validar cada requisito funcional
+-- =====================================================================================
+INSERT INTO dim_clientes (id_cliente_origem, nome_cliente, regiao_brasil, score_credito, data_cadastro) VALUES
+('CLI-FIEL-001',  'Marina Costa Bittencourt', 'SP', 910, '2022-06-10'), -- alto valor / recorrente
+('CLI-CHURN-001', 'Roberto Alves Pimentel',   'RJ', 550, '2024-01-20'), -- inativo há mais de 180 dias
+('CLI-INAD-001',  'Patrícia Souza Andrade',   'MG', 410, '2025-02-15'); -- inadimplência em meses de Selic alta
+ 
+-- ---------------------------------------------------------------------
+-- 5.1 Cliente Fiel — compra praticamente todo mês, valores altos, recorrência recente
+--     Alimenta a ponta superior de RF002 (RFM: nota 5-5-5)
+-- ---------------------------------------------------------------------
+INSERT INTO fct_vendas (id_venda_origem, fk_cliente, fk_produto, fk_tempo, data_venda, quantidade, valor_unitario, valor_total, metodo_pagamento, status_pagamento) VALUES
+('STORY-FIEL-0001', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-002'), 202510, '2025-10-05 14:20:00', 1, 449.90, 449.90, 'Crédito', 'Aprovado'),
+('STORY-FIEL-0002', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-007'), 202511, '2025-11-12 10:05:00', 2, 249.90, 499.80, 'Pix', 'Aprovado'),
+('STORY-FIEL-0003', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-008'), 202512, '2025-12-18 16:40:00', 1, 279.90, 279.90, 'Crédito', 'Aprovado'),
+('STORY-FIEL-0004', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-004'), 202601, '2026-01-09 09:15:00', 1, 219.90, 219.90, 'Pix', 'Aprovado'),
+('STORY-FIEL-0005', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-002'), 202602, '2026-02-14 11:30:00', 1, 449.90, 449.90, 'Crédito', 'Aprovado'),
+('STORY-FIEL-0006', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-006'), 202603, '2026-03-20 15:50:00', 2, 169.90, 339.80, 'Pix', 'Aprovado'),
+('STORY-FIEL-0007', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-011'), 202604, '2026-04-11 13:25:00', 1, 129.90, 129.90, 'Crédito', 'Aprovado'),
+('STORY-FIEL-0008', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-002'), 202605, '2026-05-08 10:00:00', 1, 449.90, 449.90, 'Pix', 'Aprovado'),
+('STORY-FIEL-0009', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-007'), 202606, '2026-06-17 17:10:00', 1, 249.90, 249.90, 'Crédito', 'Aprovado'),
+('STORY-FIEL-0010', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-FIEL-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-008'), 202607, '2026-07-22 12:45:00', 2, 279.90, 559.80, 'Pix', 'Aprovado');
+ 
+-- ---------------------------------------------------------------------
+-- 5.2 Cliente Churn — comprou algumas vezes no início de 2025 e nunca mais voltou
+--     Alimenta RF004 (mais de 180 dias sem comprar em relação a 01/08/2026)
+-- ---------------------------------------------------------------------
+INSERT INTO fct_vendas (id_venda_origem, fk_cliente, fk_produto, fk_tempo, data_venda, quantidade, valor_unitario, valor_total, metodo_pagamento, status_pagamento) VALUES
+('STORY-CHURN-0001', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-CHURN-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-005'), 202501, '2025-01-10 09:40:00', 3, 59.90, 179.70, 'Boleto', 'Aprovado'),
+('STORY-CHURN-0002', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-CHURN-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-009'), 202502, '2025-02-14 14:15:00', 1, 69.90, 69.90, 'Pix', 'Aprovado'),
+('STORY-CHURN-0003', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-CHURN-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-003'), 202503, '2025-03-22 11:05:00', 2, 89.90, 179.80, 'Crédito', 'Aprovado');
+ 
+-- ---------------------------------------------------------------------
+-- 5.3 Cliente Inadimplente concentrado em meses de Selic alta (2026-04 a 2026-07)
+--     Reforça visivelmente a correlação analisada em RF003
+-- ---------------------------------------------------------------------
+INSERT INTO fct_vendas (id_venda_origem, fk_cliente, fk_produto, fk_tempo, data_venda, quantidade, valor_unitario, valor_total, metodo_pagamento, status_pagamento) VALUES
+('STORY-INAD-0001', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-INAD-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-002'), 202604, '2026-04-05 10:20:00', 1, 449.90, 449.90, 'Boleto', 'Inadimplente'),
+('STORY-INAD-0002', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-INAD-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-007'), 202605, '2026-05-11 16:35:00', 1, 249.90, 249.90, 'Boleto', 'Inadimplente'),
+('STORY-INAD-0003', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-INAD-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-004'), 202606, '2026-06-09 13:50:00', 1, 219.90, 219.90, 'Boleto', 'Inadimplente'),
+('STORY-INAD-0004', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-INAD-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-008'), 202607, '2026-07-14 09:30:00', 1, 279.90, 279.90, 'Boleto', 'Inadimplente'),
+('STORY-INAD-0005', (SELECT sk_cliente FROM dim_clientes WHERE id_cliente_origem='CLI-INAD-001'), (SELECT sk_produto FROM dim_produtos WHERE id_produto_origem='PROD-011'), 202607, '2026-07-25 18:05:00', 1, 129.90, 129.90, 'Pix', 'Aprovado');
+
+ 
+-- =====================================================================================
+-- FIM DO SCRIPT DE POVOAMENTO DE DADOS FICTÍCIOS
+-- =====================================================================================

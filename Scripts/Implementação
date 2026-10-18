@@ -1,0 +1,323 @@
+-- =====================================================================================
+-- DATA MARKET MACRO E-COMMERCE
+-- Script de Implementação Completo (DDL + DML de segurança + Views analíticas)
+-- Responsável: Thiago Lima da Silva Junior
+-- Versão: 1.0
+-- SGBD alvo: MySQL 8.0+ (necessário para Window Functions, ROLES e CHECK constraints)
+-- =====================================================================================
+
+
+-- =====================================================================================
+-- 0. CRIAÇÃO DO BANCO DE DADOS
+-- =====================================================================================
+DROP DATABASE IF EXISTS db_macro_ecommerce;
+CREATE DATABASE db_macro_ecommerce
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+USE db_macro_ecommerce;
+
+
+-- =====================================================================================
+-- 1. MODELAGEM DIMENSIONAL (STAR SCHEMA) — RNF002: Integridade Referencial
+-- =====================================================================================
+
+-- ---------------------------------------------------------------------
+-- 1.1 Dimensão: Clientes
+-- ---------------------------------------------------------------------
+CREATE TABLE dim_clientes (
+    sk_cliente          INT AUTO_INCREMENT PRIMARY KEY,
+    id_cliente_origem   VARCHAR(50)  NOT NULL,
+    nome_cliente        VARCHAR(100) NOT NULL,
+    regiao_brasil       VARCHAR(2)   NOT NULL,      -- Ex: 'SP', 'RJ', 'MG'
+    score_credito       INT NOT NULL,
+    data_cadastro       DATE NOT NULL,
+
+    CONSTRAINT uq_cliente_origem UNIQUE (id_cliente_origem),
+    CONSTRAINT chk_score_credito CHECK (score_credito BETWEEN 0 AND 1000),
+    CONSTRAINT chk_regiao_uf     CHECK (regiao_brasil REGEXP '^[A-Z]{2}$')
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- 1.2 Dimensão: Produtos
+-- ---------------------------------------------------------------------
+CREATE TABLE dim_produtos (
+    sk_produto          INT AUTO_INCREMENT PRIMARY KEY,
+    id_produto_origem   VARCHAR(50)  NOT NULL,
+    nome_produto        VARCHAR(100) NOT NULL,
+    categoria           VARCHAR(50)  NOT NULL,
+    preco_custo         DECIMAL(10,2) NOT NULL,
+    preco_venda_atual   DECIMAL(10,2) NOT NULL,
+
+    CONSTRAINT uq_produto_origem UNIQUE (id_produto_origem),
+    CONSTRAINT chk_precos_positivos CHECK (preco_custo >= 0 AND preco_venda_atual >= 0)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- 1.3 Dimensão: Calendário & Macroeconomia
+-- ---------------------------------------------------------------------
+CREATE TABLE dim_macroeconomia (
+    sk_tempo            INT PRIMARY KEY,             -- Formato: YYYYMM (Ex: 202607)
+    ano_mes_competencia VARCHAR(7) NOT NULL,          -- Formato: '2026-07'
+    ano                 INT NOT NULL,
+    mes                 INT NOT NULL,
+    taxa_selic_ano      DECIMAL(5,2) NOT NULL,        -- Ex: 10.50
+    ipca_mensal         DECIMAL(5,2) NOT NULL,        -- Ex: 0.35
+
+    CONSTRAINT uq_ano_mes UNIQUE (ano_mes_competencia),
+    CONSTRAINT chk_mes_valido CHECK (mes BETWEEN 1 AND 12)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- 1.4 Fato: Vendas (centro da estrela)
+-- ---------------------------------------------------------------------
+CREATE TABLE fct_vendas (
+    sk_venda            INT AUTO_INCREMENT PRIMARY KEY,
+    id_venda_origem     VARCHAR(50) NOT NULL,
+
+    fk_cliente          INT NOT NULL,
+    fk_produto          INT NOT NULL,
+    fk_tempo            INT NOT NULL,
+
+    data_venda          DATETIME NOT NULL,
+    quantidade          INT NOT NULL,
+    valor_unitario      DECIMAL(10,2) NOT NULL,
+    valor_total         DECIMAL(10,2) NOT NULL,
+    metodo_pagamento    VARCHAR(30) NOT NULL,        -- 'Pix', 'Crédito', 'Boleto'
+    status_pagamento    VARCHAR(30) NOT NULL,        -- 'Aprovado', 'Cancelado', 'Inadimplente'
+
+    CONSTRAINT uq_venda_origem UNIQUE (id_venda_origem),
+
+    -- RNF002: nenhuma venda pode existir sem cliente/produto/período válidos
+    CONSTRAINT fk_vendas_clientes FOREIGN KEY (fk_cliente) REFERENCES dim_clientes(sk_cliente),
+    CONSTRAINT fk_vendas_produtos FOREIGN KEY (fk_produto) REFERENCES dim_produtos(sk_produto),
+    CONSTRAINT fk_vendas_macro    FOREIGN KEY (fk_tempo)   REFERENCES dim_macroeconomia(sk_tempo),
+
+    CONSTRAINT chk_quantidade_positiva CHECK (quantidade > 0),
+    CONSTRAINT chk_valores_positivos   CHECK (valor_unitario >= 0 AND valor_total >= 0),
+    CONSTRAINT chk_metodo_pagamento    CHECK (metodo_pagamento IN ('Pix','Crédito','Boleto')),
+    CONSTRAINT chk_status_pagamento    CHECK (status_pagamento IN ('Aprovado','Cancelado','Inadimplente'))
+) ENGINE=InnoDB;
+
+
+-- =====================================================================================
+-- 2. RNF003 — INDEXAÇÃO PARA DESEMPENHO (consultas analíticas < 3s)
+-- =====================================================================================
+CREATE INDEX idx_clientes_regiao      ON dim_clientes (regiao_brasil);
+CREATE INDEX idx_produtos_categoria   ON dim_produtos (categoria);
+
+CREATE INDEX idx_vendas_data          ON fct_vendas (data_venda);
+CREATE INDEX idx_vendas_status        ON fct_vendas (status_pagamento);
+CREATE INDEX idx_vendas_cliente_data  ON fct_vendas (fk_cliente, data_venda);
+CREATE INDEX idx_vendas_tempo         ON fct_vendas (fk_tempo);
+-- Observação: fk_cliente, fk_produto e fk_tempo já recebem índice implícito do InnoDB
+-- por serem chaves estrangeiras; os índices acima são compostos/adicionais para
+-- acelerar os filtros e agrupamentos usados nas views analíticas abaixo.
+
+
+-- =====================================================================================
+-- 3. RF001 — CONSOLIDAÇÃO ANALÍTICA DE VENDAS
+--    Faturamento mensal + acumulado (running total) + % crescimento MoM (window functions)
+-- =====================================================================================
+CREATE OR REPLACE VIEW vw_faturamento_mensal AS
+SELECT
+    dm.ano_mes_competencia,
+    dm.ano,
+    dm.mes,
+    SUM(fv.valor_total) AS faturamento_mensal,
+    SUM(SUM(fv.valor_total)) OVER (ORDER BY dm.ano, dm.mes) AS faturamento_acumulado,
+    ROUND(
+        (SUM(fv.valor_total) - LAG(SUM(fv.valor_total)) OVER (ORDER BY dm.ano, dm.mes))
+        / NULLIF(LAG(SUM(fv.valor_total)) OVER (ORDER BY dm.ano, dm.mes), 0) * 100
+    , 2) AS crescimento_percentual_mom
+FROM fct_vendas fv
+JOIN dim_macroeconomia dm ON fv.fk_tempo = dm.sk_tempo
+WHERE fv.status_pagamento = 'Aprovado'
+GROUP BY dm.ano_mes_competencia, dm.ano, dm.mes
+ORDER BY dm.ano, dm.mes;
+
+
+-- =====================================================================================
+-- 4. RF002 — CLASSIFICAÇÃO RFM DE CLIENTES
+--    Recência, Frequência e Valor Monetário, notas de 1 a 5 via NTILE
+-- =====================================================================================
+CREATE OR REPLACE VIEW vw_rfm_clientes AS
+WITH base_rfm AS (
+    SELECT
+        c.sk_cliente,
+        c.nome_cliente,
+        DATEDIFF(CURDATE(), MAX(v.data_venda)) AS recencia_dias,
+        COUNT(DISTINCT v.sk_venda)             AS frequencia_pedidos,
+        SUM(v.valor_total)                     AS valor_monetario
+    FROM dim_clientes c
+    JOIN fct_vendas v ON v.fk_cliente = c.sk_cliente
+    WHERE v.status_pagamento = 'Aprovado'
+    GROUP BY c.sk_cliente, c.nome_cliente
+),
+scored AS (
+    SELECT
+        sk_cliente,
+        nome_cliente,
+        recencia_dias,
+        frequencia_pedidos,
+        valor_monetario,
+        -- quanto menor a recência (comprou há pouco tempo), maior a nota
+        NTILE(5) OVER (ORDER BY recencia_dias DESC)     AS nota_recencia,
+        NTILE(5) OVER (ORDER BY frequencia_pedidos ASC) AS nota_frequencia,
+        NTILE(5) OVER (ORDER BY valor_monetario ASC)    AS nota_monetario
+    FROM base_rfm
+)
+SELECT
+    sk_cliente,
+    nome_cliente,
+    recencia_dias,
+    frequencia_pedidos,
+    valor_monetario,
+    nota_recencia,
+    nota_frequencia,
+    nota_monetario,
+    CONCAT(nota_recencia, nota_frequencia, nota_monetario) AS segmento_rfm
+FROM scored
+ORDER BY segmento_rfm DESC;
+
+
+-- =====================================================================================
+-- 5. RF003 — CORRELAÇÃO DE INADIMPLÊNCIA E TAXA SELIC
+-- =====================================================================================
+CREATE OR REPLACE VIEW vw_correlacao_inadimplencia_juros AS
+SELECT
+    dm.ano_mes_competencia,
+    dm.taxa_selic_ano,
+    COUNT(*) AS total_transacoes,
+    SUM(CASE WHEN fv.status_pagamento = 'Inadimplente' THEN 1 ELSE 0 END) AS total_inadimplentes,
+    ROUND(
+        SUM(CASE WHEN fv.status_pagamento = 'Inadimplente' THEN 1 ELSE 0 END)
+        / COUNT(*) * 100
+    , 2) AS taxa_inadimplencia_percentual
+FROM fct_vendas fv
+JOIN dim_macroeconomia dm ON fv.fk_tempo = dm.sk_tempo
+GROUP BY dm.ano_mes_competencia, dm.taxa_selic_ano
+ORDER BY dm.ano_mes_competencia;
+
+
+-- =====================================================================================
+-- 6. RF004 — RASTREAMENTO DE CHURN (EVASÃO)
+--    Clientes com atividade regular no histórico, mas sem compras nos últimos 180 dias
+-- =====================================================================================
+CREATE OR REPLACE VIEW vw_churn_clientes AS
+SELECT
+    c.sk_cliente,
+    c.nome_cliente,
+    c.regiao_brasil,
+    MAX(v.data_venda)                              AS ultima_compra,
+    DATEDIFF(CURDATE(), MAX(v.data_venda))         AS dias_sem_comprar,
+    COUNT(v.sk_venda)                              AS total_pedidos_historicos
+FROM dim_clientes c
+JOIN fct_vendas v ON v.fk_cliente = c.sk_cliente
+WHERE v.status_pagamento = 'Aprovado'
+GROUP BY c.sk_cliente, c.nome_cliente, c.regiao_brasil
+HAVING COUNT(v.sk_venda) >= 2                            -- caracteriza atividade regular
+   AND DATEDIFF(CURDATE(), MAX(v.data_venda)) > 180      -- inatividade > 180 dias
+ORDER BY dias_sem_comprar DESC;
+
+
+-- =====================================================================================
+-- 7. RNF001 — RBAC: CONTROLE DE ACESSO BASEADO EM PERFIS
+-- =====================================================================================
+
+-- ---------------------------------------------------------------------
+-- 7.1 Perfis (Roles)
+-- ---------------------------------------------------------------------
+CREATE ROLE IF NOT EXISTS 'role_gerente_analytics';
+CREATE ROLE IF NOT EXISTS 'role_analista_comercial';
+CREATE ROLE IF NOT EXISTS 'role_analista_suporte';
+
+-- Gerente de Negócios / Analytics Engineer: acesso completo (tabelas + views + DDL)
+GRANT ALL PRIVILEGES ON db_macro_ecommerce.* TO 'role_gerente_analytics';
+
+-- Analista Comercial / Financeiro: leitura de faturamento por categoria,
+-- inadimplência e métodos de pagamento — sem escrita nas tabelas brutas
+GRANT SELECT ON db_macro_ecommerce.vw_faturamento_mensal              TO 'role_analista_comercial';
+GRANT SELECT ON db_macro_ecommerce.vw_correlacao_inadimplencia_juros   TO 'role_analista_comercial';
+GRANT SELECT ON db_macro_ecommerce.fct_vendas                         TO 'role_analista_comercial';
+GRANT SELECT ON db_macro_ecommerce.dim_produtos                       TO 'role_analista_comercial';
+
+-- Analista de Suporte / Infraestrutura: monitoramento e rotinas de backup,
+-- sem acesso analítico aos dados de negócio
+GRANT SELECT, LOCK TABLES ON db_macro_ecommerce.* TO 'role_analista_suporte';
+GRANT SELECT ON db_macro_ecommerce.tb_log_backup  TO 'role_analista_suporte';
+GRANT PROCESS, RELOAD ON *.* TO 'role_analista_suporte';
+
+-- ---------------------------------------------------------------------
+-- 7.2 Usuários de exemplo e vínculo com os perfis
+--     (troque as senhas antes de subir para produção)
+-- ---------------------------------------------------------------------
+CREATE USER IF NOT EXISTS 'gerente1'@'%'   IDENTIFIED BY 'TrocarSenha#Gerente2026';
+CREATE USER IF NOT EXISTS 'comercial1'@'%' IDENTIFIED BY 'TrocarSenha#Comercial2026';
+CREATE USER IF NOT EXISTS 'suporte1'@'%'   IDENTIFIED BY 'TrocarSenha#Suporte2026';
+
+GRANT 'role_gerente_analytics'   TO 'gerente1'@'%';
+GRANT 'role_analista_comercial'  TO 'comercial1'@'%';
+GRANT 'role_analista_suporte'    TO 'suporte1'@'%';
+
+SET DEFAULT ROLE ALL TO 'gerente1'@'%', 'comercial1'@'%', 'suporte1'@'%';
+
+FLUSH PRIVILEGES;
+
+
+-- =====================================================================================
+-- 8. ROTINA DE BACKUP DIÁRIO (log + agendamento)
+-- =====================================================================================
+-- IMPORTANTE: o SQL não executa dump físico do arquivo do banco. A tabela e a rotina
+-- abaixo registram METADADOS de execução (contagens do dia) para auditoria e envio
+-- ao e-mail da gerência. O backup físico (dump .sql / arquivo consolidado) deve ser
+-- agendado externamente via cron/agendador do SO, por exemplo:
+--
+--   mysqldump -u suporte1 -p db_macro_ecommerce fct_vendas dim_clientes dim_produtos \
+--       dim_macroeconomia > backup_$(date +%Y%m%d).sql
+--
+-- e então o Analista de Suporte envia esse arquivo ao repositório de segurança
+-- e ao e-mail cadastrado da gerência, conforme descrito no escopo.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE tb_log_backup (
+    id_log             INT AUTO_INCREMENT PRIMARY KEY,
+    data_execucao      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    tabela_referencia  VARCHAR(100) NOT NULL,
+    qtd_registros      INT NOT NULL,
+    status_execucao    VARCHAR(20) NOT NULL
+) ENGINE=InnoDB;
+
+DELIMITER $$
+CREATE PROCEDURE sp_backup_diario()
+BEGIN
+    DECLARE qtd_vendas_dia   INT;
+    DECLARE qtd_clientes     INT;
+    DECLARE qtd_produtos     INT;
+
+    SELECT COUNT(*) INTO qtd_vendas_dia
+    FROM fct_vendas
+    WHERE DATE(data_venda) = CURDATE();
+
+    SELECT COUNT(*) INTO qtd_clientes FROM dim_clientes;
+    SELECT COUNT(*) INTO qtd_produtos FROM dim_produtos;
+
+    INSERT INTO tb_log_backup (tabela_referencia, qtd_registros, status_execucao)
+    VALUES
+        ('fct_vendas_dia', qtd_vendas_dia, 'OK'),
+        ('dim_clientes',   qtd_clientes,   'OK'),
+        ('dim_produtos',   qtd_produtos,   'OK');
+END$$
+DELIMITER ;
+
+-- Habilita o agendador de eventos do MySQL (necessário permissão de SUPER/SYSTEM_VARIABLES_ADMIN)
+SET GLOBAL event_scheduler = ON;
+
+CREATE EVENT IF NOT EXISTS evt_backup_diario
+ON SCHEDULE EVERY 1 DAY
+STARTS (CURRENT_DATE + INTERVAL 1 DAY + INTERVAL 2 HOUR)  -- roda diariamente às 02:00
+DO CALL sp_backup_diario();
+
+
+-- =====================================================================================
+-- FIM DO SCRIPT
+-- =====================================================================================
